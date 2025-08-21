@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>3D Print Instant Quote</title>
+<script src="https://cdn.jsdelivr.net/npm/three@0.154.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.154.0/examples/js/loaders/STLLoader.js"></script>
+<style>
+  body { font-family: Arial, sans-serif; padding: 20px; background: #f8f9fa; color: #333; }
+  h2 { color: #007bff; }
+  #dropZone {
+    border: 2px dashed #007bff;
+    border-radius: 10px;
+    padding: 40px;
+    text-align: center;
+    cursor: pointer;
+    margin-bottom: 20px;
+    background: #e9f5ff;
+    transition: background 0.2s;
+  }
+  #dropZone.dragover { background: #d0e9ff; }
+  select, #quote { margin-top: 10px; display: block; font-size: 1rem; }
+  #progressContainer { width: 100%; background: #ddd; height: 20px; border-radius: 10px; overflow: hidden; margin-top: 10px; display: none; }
+  #progressBar { width: 0%; height: 100%; background: #007bff; transition: width 0.2s; }
+</style>
+</head>
+<body>
+
+<h2>3D Print Instant Quote</h2>
+
+<div id="dropZone">Drag & drop your STL file here or click to select</div>
+<input type="file" id="fileInput" style="display:none;">
+<select id="material">
+  <option value="PLA">PLA ($0.12/g)</option>
+  <option value="PETG">PETG ($0.12/g)</option>
+  <option value="TPU">TPU ($0.20/g)</option>
+</select>
+
+<div id="progressContainer">
+  <div id="progressBar"></div>
+</div>
+
+<p id="quote">Quote will appear here.</p>
+
+<script>
+const densities = {PLA:1.24, PETG:1.27, TPU:1.2};
+const prices = {PLA:0.12, PETG:0.12, TPU:0.2};
+
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const quoteEl = document.getElementById('quote');
+const progressContainer = document.getElementById('progressContainer');
+const progressBar = document.getElementById('progressBar');
+
+// Drag-and-drop support
+dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault(); dropZone.classList.remove('dragover');
+  if(e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
+});
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => handleFile(fileInput.files[0]));
+
+// Calculate mesh volume with progress callback
+function calculateMeshVolume(geometry, progressCallback) {
+    const position = geometry.attributes.position.array;
+    const nTriangles = position.length / 9;
+    let volume = 0;
+    const chunk = 5000;
+
+    for (let i = 0; i < position.length; i += 9) {
+        const ax=position[i], ay=position[i+1], az=position[i+2];
+        const bx=position[i+3], by=position[i+4], bz=position[i+5];
+        const cx=position[i+6], cy=position[i+7], cz=position[i+8];
+        volume += (ax*(by*cz - bz*cy) - ay*(bx*cz - bz*cx) + az*(bx*cy - by*cx)) / 6;
+
+        if(progressCallback && i % (chunk*9) === 0) progressCallback(i/9/nTriangles);
+    }
+    if(progressCallback) progressCallback(1);
+    return Math.abs(volume);
+}
+
+// Handle file
+function handleFile(file) {
+    if(!file) return;
+
+    quoteEl.innerText = "Calculating...";
+    progressContainer.style.display = 'block';
+    progressBar.style.width = '0%';
+
+    const reader = new FileReader();
+    reader.onload = function(evt) {
+        const contents = evt.target.result;
+        const loader = new THREE.STLLoader();
+        let geometry;
+        try { geometry = loader.parse(contents); }
+        catch(err) {
+            quoteEl.innerText = "Error parsing STL file.";
+            progressContainer.style.display = 'none';
+            console.error(err);
+            return;
+        }
+
+        if(!geometry.attributes || !geometry.attributes.position){
+            quoteEl.innerText = "Invalid STL geometry.";
+            progressContainer.style.display = 'none';
+            return;
+        }
+
+        setTimeout(() => {
+            const volumeMm3 = calculateMeshVolume(geometry, (progress) => {
+                progressBar.style.width = (progress*100).toFixed(1) + '%';
+            });
+
+            const volumeCm3 = volumeMm3 / 1000;
+            const material = document.getElementById('material').value;
+            const weight = volumeCm3 * densities[material];
+            const price = weight * prices[material];
+
+            quoteEl.innerText = `Estimated weight: ${weight.toFixed(2)} g\nEstimated price: $${price.toFixed(2)}`;
+            progressContainer.style.display = 'none';
+        }, 50);
+    };
+
+    reader.readAsArrayBuffer(file);
+}
+</script>
+
+</body>
